@@ -636,10 +636,33 @@ window.initGame = function(){
   updateClock(); loadPrices(); renderContent(); renderHoursBar();
   setInterval(updateClock,1000); setInterval(renderHoursBar,30000);
   setInterval(()=>{ simulateTick(); if(S.tab==='market') renderMarket(); updateHeader(); },4000);
-  setInterval(loadPrices,5*60*1000);
+  setInterval(loadPrices,2*60*1000); // كل دقيقتين للكريبتو
 };
 
 async function loadPrices(){
+  // جلب الكريبتو الحقيقي من CoinGecko
+  try{
+    const cr=await fetch(`${API_BASE}/api/crypto`,{signal:AbortSignal.timeout(8000)});
+    const cj=await cr.json();
+    if(cj.ok&&cj.data){
+      cj.data.forEach(q=>{
+        if(q.price){
+          S.prevPrices[q.id]=S.prices[q.id]||q.prevClose||q.price;
+          S.prices[q.id]=q.price;
+          const h=S.histories[q.id]||[];
+          h.push(q.price);
+          if(h.length>50)h.shift();
+          S.histories[q.id]=h;
+          // حفظ التغير الحقيقي
+          S.realChange=S.realChange||{};
+          S.realChange[q.id]={change:q.change,changePct:q.changePct,prevClose:q.prevClose};
+        }
+      });
+      renderContent();
+    }
+  }catch(e){ console.warn('crypto fetch failed',e.message); }
+
+  // جلب الأسهم السعودية (محاكاة ذكية)
   try{
     const r=await fetch(`${API_BASE}/api/quotes`,{signal:AbortSignal.timeout(8000)});
     const j=await r.json();
@@ -688,7 +711,11 @@ function renderMarket(){
   const total=totalVal(),pnl=portPnl(),ret=((total-100000)/100000*100);
   const filtered=STOCKS.filter(s=>{ if(S.filter!=='all'&&s.cat!==S.filter) return false; if(S.search&&!s.name.includes(S.search)&&!s.id.includes(S.search)) return false; return true; });
   const rows=filtered.map(s=>{
-    const price=S.prices[s.id],chg=price-s.base,chgPct=(chg/s.base*100),pos=S.portfolio[s.id];
+    const price=S.prices[s.id],pos=S.portfolio[s.id];
+    // استخدم التغير الحقيقي للكريبتو، والمحاكاة للباقي
+    const realC=S.realChange&&S.realChange[s.id];
+    const chg=realC?realC.change:(price-s.base);
+    const chgPct=realC?realC.changePct:((price-s.base)/s.base*100);
     const catBadge=s.cat==='saudi'?'<span class="badge b-saudi">🇸🇦 سعودي</span>':s.cat==='us'?'<span class="badge b-us">🇺🇸 أمريكي</span>':'<span class="badge b-crypto">₿ كريبتو</span>';
     const mkt=getMarketStatus(s.cat);
     const openDot=mkt.open?'<span style="width:7px;height:7px;background:#00c853;border-radius:50%;display:inline-block;margin-left:5px;vertical-align:middle;box-shadow:0 0 6px #00c853"></span>':'<span style="width:7px;height:7px;background:#ff1744;border-radius:50%;display:inline-block;margin-left:5px;vertical-align:middle"></span>';
@@ -778,7 +805,8 @@ function openOrder(id,type){
   if(type==='sell'&&!maxSell){ toast('❌ لا تملك أسهماً في '+s.name,'error'); return; }
   const info=getMarketInfo();
   const note=info.status!=='open'?`<div style="background:#ffd60010;border:1px solid #ffd60025;border-radius:10px;padding:10px 14px;font-size:12px;color:var(--gold);margin-bottom:14px">⚠️ ${info.label} — سيُنفَّذ الأمر عند الافتتاح</div>`:'';
-  const chgPct=((price-s.base)/s.base*100);
+  const realC2=S.realChange&&S.realChange[s.id];
+  const chgPct=realC2?realC2.changePct:((price-s.base)/s.base*100);
   document.getElementById('modal').classList.add('show');
   document.getElementById('modal-body').innerHTML=`
     <div class="modal-stock">
