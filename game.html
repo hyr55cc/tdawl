@@ -796,43 +796,97 @@ function renderHistory(){
   document.getElementById('main-content').innerHTML=`<div class="section-title" style="margin-bottom:16px">سجل الصفقات (${trades.length})</div><div class="table-wrap" style="padding:0 18px">${items}</div>`;
 }
 
+function setMaxQty(btn){
+  const ctx=window._orderCtx; if(!ctx) return;
+  const max=ctx.type==='buy'?ctx.maxBuy:ctx.maxSell;
+  const el=document.getElementById('qty-in');
+  if(el){el.value=max; calcQtyInput(el);}
+}
+function adjQtyBtn(btn,delta){
+  const ctx=window._orderCtx; if(!ctx) return;
+  adjQty(ctx.id,ctx.type,delta);
+}
+function calcQtyInput(inp){
+  const ctx=window._orderCtx; if(!ctx) return;
+  calcOrder(ctx.id,ctx.type);
+}
+function execOrderModal(btn){
+  const ctx=window._orderCtx; if(!ctx) return;
+  execOrder(ctx.id,ctx.type);
+}
+
 function openOrder(id,type){
-  const s=STOCKS.find(x=>x.id===id),price=S.prices[id],pos=S.portfolio[id];
-  const maxBuy=Math.floor(S.cash/price),maxSell=pos?.qty||0;
+  const s=STOCKS.find(x=>x.id===id);
+  if(!s){ return; }
+  const price=S.prices[id]||s.base;
+  const pos=S.portfolio[id];
+  const maxBuy=Math.floor(S.cash/price);
+  const maxSell=pos?pos.qty:0;
+
   // تحقق من أوقات السوق
   const mktStatus=getMarketStatus(s.cat);
   if(!mktStatus.open){ toast('⛔ '+mktStatus.label+' — لا يمكن التداول الآن','error'); return; }
   if(type==='sell'&&!maxSell){ toast('❌ لا تملك أسهماً في '+s.name,'error'); return; }
-  const info=getMarketInfo();
-  const note=info.status!=='open'?`<div style="background:#ffd60010;border:1px solid #ffd60025;border-radius:10px;padding:10px 14px;font-size:12px;color:var(--gold);margin-bottom:14px">⚠️ ${info.label} — سيُنفَّذ الأمر عند الافتتاح</div>`:'';
-  const realC2=S.realChange&&S.realChange[s.id];
-  const chgPct=realC2?realC2.changePct:((price-s.base)/s.base*100);
+
+  // بيانات العرض
+  const cur=s.cat==='saudi'?'ر.س':'$';
+  const realC=S.realChange&&S.realChange[id];
+  const chgPct=realC?realC.changePct:((price-s.base)/s.base*100);
+  const isBuy=type==='buy';
+
+  // ملاحظة السوق
+  let noteHtml='';
+  if(s.cat==='crypto'){
+    noteHtml='<div style="background:#f7931a10;border:1px solid #f7931a25;border-radius:10px;padding:8px 14px;font-size:12px;color:#f7931a;margin-bottom:14px">₿ العملات الرقمية تتداول 24/7</div>';
+  } else if(s.cat==='us'){
+    noteHtml='<div style="background:#2979ff10;border:1px solid #2979ff25;border-radius:10px;padding:8px 14px;font-size:12px;color:#5c9eff;margin-bottom:14px">🇺🇸 السوق الأمريكي مفتوح 4:30م–11:00م (ت.ر)</div>';
+  } else {
+    noteHtml='<div style="background:#00c85310;border:1px solid #00c85325;border-radius:10px;padding:8px 14px;font-size:12px;color:var(--green);margin-bottom:14px">🇸🇦 السوق السعودي مفتوح 10:00ص–3:00م</div>';
+  }
+
+  const priceStr=fmt(price)+' '+cur;
+  const chgClass=chgPct>0?'up':chgPct<0?'dn':'neu';
+  const chgSign=chgPct>=0?'+':'';
+  const logoChar=s.flag||id.slice(-2);
+  const limitTxt=isBuy
+    ? 'أقصى شراء: <b style="color:var(--text)">'+maxBuy+'</b> سهم'
+    : 'تملك: <b style="color:var(--text)">'+maxSell+'</b> سهم';
+  const initQty=1;
+  const initMax=isBuy?maxBuy:maxSell;
+
+  // Store current order context
+  window._orderCtx = {id, type, s, price, cur, maxBuy, maxSell};
   document.getElementById('modal').classList.add('show');
-  document.getElementById('modal-body').innerHTML=`
-    <div class="modal-stock">
-      <div class="modal-slogo" style="background:${s.bg};color:${s.tc}">${id.slice(-2)}</div>
-      <div style="flex:1"><div class="modal-name">${type==='buy'?'شراء':'بيع'} — ${s.name}</div><div class="modal-price">${fmt(price)} <span style="font-size:13px;color:var(--text3)">${currencyLabel}</span></div></div>
-      <span class="change-cell ${clr(chgPct)}">${pct(chgPct)}</span>
-    </div>
-    ${note}
-    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">${type==='buy'?`أقصى شراء: <b style="color:var(--text)">${maxBuy}</b> سهم`:`تملك: <b style="color:var(--text)">${maxSell}</b> سهم`} <button class="max-btn" onclick="document.getElementById('qty-in').value=${type==='buy'?maxBuy:maxSell};calcOrder('${id}','${type}')">الحد الأقصى</button></div>
-    <div class="qty-row">
-      <button class="qty-btn" onclick="adjQty('${id}','${type}',-10)">-10</button>
-      <button class="qty-btn" onclick="adjQty('${id}','${type}',-1)">-</button>
-      <input type="number" class="qty-input" id="qty-in" min="1" max="${type==='buy'?maxBuy:maxSell}" value="1" oninput="calcOrder('${id}','${type}')">
-      <button class="qty-btn" onclick="adjQty('${id}','${type}',1)">+</button>
-      <button class="qty-btn" onclick="adjQty('${id}','${type}',10)">+10</button>
-    </div>
-    <div class="order-summary">
-      <div class="order-row"><span>سعر السهم</span><b>${fmt(price)}</b></div>
-      <div class="order-row"><span>الكمية</span><b id="s-qty">1</b></div>
-      <div class="order-row"><span>العمولة</span><b>مجاني 🎉</b></div>
-      <div class="order-row order-total"><span>${type==='buy'?'إجمالي الدفع':'إجمالي الاستلام'}</span><b id="s-total">${fmt(price)} ر.س</b></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
-      <button class="btn-confirm ${type}" id="confirm-btn" onclick="execOrder('${id}','${type}')">${type==='buy'?'✅ تأكيد الشراء':'💰 تأكيد البيع'}</button>
-    </div>`;
+  document.getElementById('modal-body').innerHTML=
+    '<div class="modal-stock">'+
+      '<div class="modal-slogo" style="background:'+s.bg+';color:'+s.tc+'">'+logoChar+'</div>'+
+      '<div style="flex:1">'+
+        '<div class="modal-name">'+(isBuy?'شراء':'بيع')+' — '+s.name+'</div>'+
+        '<div class="modal-price">'+priceStr+'</div>'+
+      '</div>'+
+      '<span class="change-cell '+chgClass+'">'+chgSign+chgPct.toFixed(2)+'%</span>'+
+    '</div>'+
+    noteHtml+
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">'+limitTxt+
+      ' <button class="max-btn" onclick="setMaxQty(this)">الحد الأقصى</button>'+
+    '</div>'+
+    '<div class="qty-row">'+
+      '<button class="qty-btn" onclick="adjQtyBtn(this,-10)">-10</button>'+
+      '<button class="qty-btn" onclick="adjQtyBtn(this,-1)">−</button>'+
+      '<input type="number" class="qty-input" id="qty-in" min="1" max="'+initMax+'" value="'+initQty+'" oninput="calcQtyInput(this)">'+
+      '<button class="qty-btn" onclick="adjQtyBtn(this,1)">+</button>'+
+      '<button class="qty-btn" onclick="adjQtyBtn(this,10)">+10</button>'+
+    '</div>'+
+    '<div class="order-summary">'+
+      '<div class="order-row"><span>سعر الوحدة</span><b>'+priceStr+'</b></div>'+
+      '<div class="order-row"><span>الكمية</span><b id="s-qty">'+initQty+'</b></div>'+
+      '<div class="order-row"><span>العمولة</span><b>مجاني 🎉</b></div>'+
+      '<div class="order-row order-total"><span>'+(isBuy?'إجمالي الدفع':'إجمالي الاستلام')+'</span><b id="s-total">'+fmt(price*initQty)+' '+cur+'</b></div>'+
+    '</div>'+
+    '<div class="modal-footer">'+
+      '<button class="btn-ghost" onclick="closeModal()">إلغاء</button>'+
+      '<button class="btn-confirm '+type+'" id="confirm-btn" onclick="execOrderModal(this)">'+(isBuy?'✅ تأكيد الشراء':'💰 تأكيد البيع')+'</button>'+
+    '</div>';
   calcOrder(id,type);
 }
 
