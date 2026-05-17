@@ -562,12 +562,54 @@ const pct  = n=>`${(n||0)>=0?'+':''}${(+(n||0)).toFixed(2)}%`;
 const clr  = n=>(n||0)>0?'up':(n||0)<0?'dn':'neu';
 
 function getRiyadh(){ return new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Riyadh'})); }
-function getMarketInfo(){
-  const r=getRiyadh(),day=r.getDay(),mins=r.getHours()*60+r.getMinutes();
-  if(day===5||day===6) return {status:'weekend',label:'إجازة نهاية الأسبوع',color:'closed'};
-  if(mins>=600&&mins<900) return {status:'open',label:'السوق مفتوح 🟢',color:'open'};
-  if(mins>=570&&mins<600) return {status:'preopen',label:'ما قبل الافتتاح',color:'premarket'};
-  return {status:'closed',label:'السوق مغلق',color:'closed'};
+// ── أوقات كل سوق بتوقيت الرياض ──
+// السعودي:  الأحد–الخميس 10:00–15:00
+// الأمريكي: الإثنين–الجمعة 16:30–23:00 (بتوقيت الرياض = EST+3 تقريباً في الشتاء، EST+3 = 9:30am EST → 16:30 رياض)
+// الكريبتو: 24/7 دائماً مفتوح
+
+function getMarketStatus(cat) {
+  const r = getRiyadh();
+  const day  = r.getDay(); // 0=Sun,1=Mon,...,5=Fri,6=Sat
+  const mins = r.getHours() * 60 + r.getMinutes();
+
+  if (cat === 'crypto') {
+    return { open: true, status: 'open', label: '₿ كريبتو — مفتوح 24/7', color: 'open', emoji: '₿' };
+  }
+
+  if (cat === 'saudi') {
+    const isWorkday = day >= 0 && day <= 4; // الأحد-الخميس
+    if (!isWorkday) return { open: false, status: 'weekend', label: '🇸🇦 السوق السعودي مغلق — الجمعة والسبت', color: 'closed', emoji: '🇸🇦' };
+    if (mins >= 570 && mins < 600) return { open: false, status: 'preopen', label: '🇸🇦 ما قبل الافتتاح السعودي (9:30)', color: 'premarket', emoji: '🇸🇦' };
+    if (mins >= 600 && mins < 900) return { open: true,  status: 'open',    label: '🇸🇦 السوق السعودي مفتوح 10:00–15:00', color: 'open', emoji: '🇸🇦' };
+    return { open: false, status: 'closed', label: '🇸🇦 السوق السعودي مغلق', color: 'closed', emoji: '🇸🇦' };
+  }
+
+  if (cat === 'us') {
+    // السوق الأمريكي يعمل الإثنين–الجمعة
+    // 9:30am–4:00pm EST = 16:30–23:00 بتوقيت الرياض (شتاء، UTC+3)
+    const isWorkday = day >= 1 && day <= 5; // الإثنين-الجمعة
+    if (!isWorkday) return { open: false, status: 'weekend', label: '🇺🇸 السوق الأمريكي مغلق — الوكاند', color: 'closed', emoji: '🇺🇸' };
+    if (mins >= 990 && mins < 1380) return { open: true,  status: 'open',    label: '🇺🇸 السوق الأمريكي مفتوح 4:30م–11:00م', color: 'open', emoji: '🇺🇸' };
+    if (mins >= 960 && mins < 990)  return { open: false, status: 'preopen', label: '🇺🇸 ما قبل الافتتاح الأمريكي (4:00م)', color: 'premarket', emoji: '🇺🇸' };
+    return { open: false, status: 'closed', label: '🇺🇸 السوق الأمريكي مغلق', color: 'closed', emoji: '🇺🇸' };
+  }
+
+  return { open: false, status: 'closed', label: 'مغلق', color: 'closed', emoji: '⛔' };
+}
+
+// للهيدر — نعرض حالة مجمعة
+function getMarketInfo() {
+  const r = getRiyadh();
+  const day  = r.getDay();
+  const mins = r.getHours() * 60 + r.getMinutes();
+  const saudi = getMarketStatus('saudi');
+  const us    = getMarketStatus('us');
+
+  if (saudi.open) return { status: 'open',    label: '🇸🇦 السعودي مفتوح', color: 'open' };
+  if (us.open)    return { status: 'open',    label: '🇺🇸 الأمريكي مفتوح', color: 'open' };
+  const isWeekend = day === 5 || day === 6;
+  if (isWeekend)  return { status: 'weekend', label: 'إجازة نهاية الأسبوع', color: 'closed' };
+  return { status: 'closed', label: '₿ كريبتو فقط', color: 'premarket' };
 }
 function getCountdown(){
   const r=getRiyadh(),day=r.getDay(),d=day===5?2:day===6?1:0;
@@ -591,8 +633,8 @@ function updateClock(){
 
 window.initGame = function(){
   STOCKS.forEach(s=>{ S.prices[s.id]=s.base; S.prevPrices[s.id]=s.base; S.histories[s.id]=[s.base]; });
-  updateClock(); loadPrices(); renderContent();
-  setInterval(updateClock,1000);
+  updateClock(); loadPrices(); renderContent(); renderHoursBar();
+  setInterval(updateClock,1000); setInterval(renderHoursBar,30000);
   setInterval(()=>{ simulateTick(); if(S.tab==='market') renderMarket(); updateHeader(); },4000);
   setInterval(loadPrices,5*60*1000);
 };
@@ -648,12 +690,19 @@ function renderMarket(){
   const rows=filtered.map(s=>{
     const price=S.prices[s.id],chg=price-s.base,chgPct=(chg/s.base*100),pos=S.portfolio[s.id];
     const catBadge=s.cat==='saudi'?'<span class="badge b-saudi">🇸🇦 سعودي</span>':s.cat==='us'?'<span class="badge b-us">🇺🇸 أمريكي</span>':'<span class="badge b-crypto">₿ كريبتو</span>';
-    return `<tr onclick="openOrder('${s.id}','buy')">
-      <td><div class="stock-cell"><div class="slogo" style="background:${s.bg};color:${s.tc}">${s.id.slice(-2)}</div><div><div class="sname">${pos?`<span class="in-port">${pos.qty}✓</span>`:''}${s.name}</div><div class="ssym">${s.id}</div></div></div></td>
+    const mkt=getMarketStatus(s.cat);
+    const openDot=mkt.open?'<span style="width:7px;height:7px;background:#00c853;border-radius:50%;display:inline-block;margin-left:5px;vertical-align:middle;box-shadow:0 0 6px #00c853"></span>':'<span style="width:7px;height:7px;background:#ff1744;border-radius:50%;display:inline-block;margin-left:5px;vertical-align:middle"></span>';
+    const rowStyle=mkt.open?'':'opacity:.6;';
+    const priceStr=s.cat==='saudi'?fmt(price)+' ر.س':s.cat==='crypto'&&price<1?price.toFixed(4)+' $':fmt(price)+' $';
+    const actionBtns=mkt.open
+      ? `<button class="btn btn-buy" onclick="event.stopPropagation();openOrder('${s.id}','buy')">شراء</button>${pos?`<button class="btn btn-sell" style="margin-right:5px" onclick="event.stopPropagation();openOrder('${s.id}','sell')">بيع</button>`:''}`
+      : `<span style="font-size:11px;color:var(--text3);background:var(--bg3);padding:4px 10px;border-radius:8px;border:1px solid var(--border)">⛔ مغلق</span>`;
+    return `<tr onclick="openOrder('${s.id}','buy')" style="${rowStyle}">
+      <td><div class="stock-cell"><div class="slogo" style="background:${s.bg};color:${s.tc}">${s.flag}</div><div><div class="sname">${openDot}${pos?`<span class="in-port">${pos.qty}✓</span>`:''}${s.name}</div><div class="ssym">${s.id} · ${mkt.open?'مفتوح':'مغلق'}</div></div></div></td>
       <td>${catBadge}</td><td>${sparkSVG(s.id)}</td>
-      <td class="price-cell">${fmt(price)}</td>
+      <td class="price-cell">${priceStr}</td>
       <td><span class="change-cell ${clr(chgPct)}">${chgPct>=0?'+':''}${chgPct.toFixed(2)}%</span></td>
-      <td><button class="btn btn-buy" onclick="event.stopPropagation();openOrder('${s.id}','buy')">شراء</button>${pos?`<button class="btn btn-sell" style="margin-right:5px" onclick="event.stopPropagation();openOrder('${s.id}','sell')">بيع</button>`:''}</td>
+      <td>${actionBtns}</td>
     </tr>`;
   }).join('');
   document.getElementById('main-content').innerHTML=`
@@ -663,6 +712,7 @@ function renderMarket(){
       <div class="stat blue"><div class="stat-icon">💵</div><div class="stat-label">النقدي المتاح</div><div class="stat-value">${fmtI(S.cash)}</div><div class="stat-sub">ريال سعودي</div></div>
       <div class="stat gold"><div class="stat-icon">📦</div><div class="stat-label">صفقات مفتوحة</div><div class="stat-value">${Object.keys(S.portfolio).length}</div><div class="stat-sub">${Object.keys(S.trades).length} صفقة كلياً</div></div>
     </div>
+    <div id="mkt-hours-bar" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap"></div>
     <div class="toolbar"><div class="section-title">السوق <small>25 ورقة مالية عالمية</small></div><div class="search-wrap"><span class="search-icon">🔍</span><input class="search-input" placeholder="ابحث..." value="${S.search}" oninput="S.search=this.value;renderMarket()"></div></div>
     <div class="pills">
       <div class="pill ${S.filter==='all'?'active':''}" onclick="S.filter='all';renderMarket()">الكل</div>
@@ -722,6 +772,9 @@ function renderHistory(){
 function openOrder(id,type){
   const s=STOCKS.find(x=>x.id===id),price=S.prices[id],pos=S.portfolio[id];
   const maxBuy=Math.floor(S.cash/price),maxSell=pos?.qty||0;
+  // تحقق من أوقات السوق
+  const mktStatus=getMarketStatus(s.cat);
+  if(!mktStatus.open){ toast('⛔ '+mktStatus.label+' — لا يمكن التداول الآن','error'); return; }
   if(type==='sell'&&!maxSell){ toast('❌ لا تملك أسهماً في '+s.name,'error'); return; }
   const info=getMarketInfo();
   const note=info.status!=='open'?`<div style="background:#ffd60010;border:1px solid #ffd60025;border-radius:10px;padding:10px 14px;font-size:12px;color:var(--gold);margin-bottom:14px">⚠️ ${info.label} — سيُنفَّذ الأمر عند الافتتاح</div>`:'';
@@ -768,6 +821,32 @@ function execOrder(id,type){
 }
 
 function closeModal(){ document.getElementById('modal').classList.remove('show'); }
+
+function renderHoursBar() {
+  const bar = document.getElementById('mkt-hours-bar');
+  if (!bar) return;
+  const markets = [
+    { cat:'saudi',  label:'🇸🇦 السوق السعودي', hours:'أحد–خميس 10:00–15:00' },
+    { cat:'us',     label:'🇺🇸 السوق الأمريكي', hours:'إثنين–جمعة 4:30–11:00م' },
+    { cat:'crypto', label:'₿ كريبتو',           hours:'24 ساعة / 7 أيام' },
+  ];
+  bar.innerHTML = markets.map(m => {
+    const st = getMarketStatus(m.cat);
+    const color = st.open ? '#00c853' : '#ff1744';
+    const bg    = st.open ? '#00c85312' : '#ff174410';
+    const border= st.open ? '#00c85330' : '#ff174425';
+    const dot   = st.open ? '🟢' : '🔴';
+    return `<div style="background:$${bg};border:1px solid $${border};border-radius:10px;padding:8px 14px;font-size:12px;display:flex;align-items:center;gap:8px;flex:1;min-width:160px">
+      <span style="font-size:14px">${dot}</span>
+      <div>
+        <div style="font-weight:700;color:$${color}">${m.label}</div>
+        <div style="color:var(--text3);font-size:11px;margin-top:1px">${m.hours}</div>
+      </div>
+      <div style="margin-right:auto;font-size:11px;font-weight:700;color:$${color}">${st.open?'مفتوح':'مغلق'}</div>
+    </div>`;
+  }).join('');
+}
+
 window.toast = function(msg,type='success'){ const w=document.getElementById('toast-wrap'),el=document.createElement('div'); el.className=`toast ${type}`; el.textContent=msg; w.appendChild(el); setTimeout(()=>{el.style.opacity='0';el.style.transition='.3s';setTimeout(()=>el.remove(),300);},3000); }
 
 // ── THEME ──
