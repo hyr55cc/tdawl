@@ -811,7 +811,7 @@ function openOrder(id,type){
   document.getElementById('modal-body').innerHTML=`
     <div class="modal-stock">
       <div class="modal-slogo" style="background:${s.bg};color:${s.tc}">${id.slice(-2)}</div>
-      <div style="flex:1"><div class="modal-name">${type==='buy'?'شراء':'بيع'} — ${s.name}</div><div class="modal-price">${fmt(price)} <span style="font-size:13px;color:var(--text3)">${{s.cat==='saudi'?'ر.س':'$'}}</span></div></div>
+      <div style="flex:1"><div class="modal-name">${type==='buy'?'شراء':'بيع'} — ${s.name}</div><div class="modal-price">${fmt(price)} <span style="font-size:13px;color:var(--text3)">${currencyLabel}</span></div></div>
       <span class="change-cell ${clr(chgPct)}">${pct(chgPct)}</span>
     </div>
     ${note}
